@@ -1,0 +1,12 @@
+[package]
+name = "sqlmig-lint"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Static checks for SQL migration files"
+
+[[bin]]
+name = "sqlmig-lint"
+path = "src/main.rs"
+
+[dependencies]
