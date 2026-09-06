@@ -59,10 +59,13 @@ exit code. That split is what keeps rules trivial to unit test - each one
 is a string literal in, a list of findings out - and it's worth preserving
 when adding new rules.
 
-The current rules match on uppercased line content rather than parsing SQL
-properly. That's a real limitation: a `DROP TABLE` mentioned inside a
-string literal or a comment will still be flagged. Fixing that means adding
-a minimal tokenizer, which is on the roadmap rather than in this first cut.
+The rules themselves still match on uppercased line content rather than
+parsing SQL properly, but before they run, `src/tokenizer.rs` blanks out
+the contents of string literals and comments (`--`, `/* */`, quoted
+strings and identifiers, including doubled-quote escapes) so a keyword
+mentioned there doesn't get flagged as if it were a real statement. It's
+still not a real parser: multi-statement lines and dialect-specific quoting
+rules beyond the ANSI basics aren't handled.
 
 ## License
 

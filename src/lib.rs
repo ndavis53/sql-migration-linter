@@ -4,6 +4,7 @@
 //! against migration files before they touch a real database.
 
 pub mod rules;
+pub mod tokenizer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -14,11 +15,16 @@ pub struct Finding {
 }
 
 /// Runs every rule against `source` and returns findings ordered by line.
+///
+/// Rules see `source` with string and comment contents blanked out first,
+/// so a keyword that only appears inside a string literal or a comment
+/// doesn't get flagged as if it were a real statement.
 pub fn lint(source: &str) -> Vec<Finding> {
+    let masked = tokenizer::mask_strings_and_comments(source);
     let mut findings = Vec::new();
-    findings.extend(rules::drop_table_without_if_exists(source));
-    findings.extend(rules::drop_column(source));
-    findings.extend(rules::select_star(source));
+    findings.extend(rules::drop_table_without_if_exists(&masked));
+    findings.extend(rules::drop_column(&masked));
+    findings.extend(rules::select_star(&masked));
     findings.sort_by_key(|f| f.line);
     findings
 }
@@ -41,6 +47,13 @@ mod tests {
     #[test]
     fn clean_migration_has_no_findings() {
         let sql = "CREATE TABLE accounts (id INTEGER PRIMARY KEY);";
+        assert!(lint(sql).is_empty());
+    }
+
+    #[test]
+    fn ignores_keywords_inside_strings_and_comments() {
+        let sql = "-- DROP TABLE accounts is just an example in this comment\n\
+                    INSERT INTO log(msg) VALUES ('remember to DROP TABLE later');";
         assert!(lint(sql).is_empty());
     }
 }
