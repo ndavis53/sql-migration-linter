@@ -59,6 +59,27 @@ pub fn select_star(source: &str) -> Vec<Finding> {
     findings
 }
 
+/// Adding a `NOT NULL` column with no `DEFAULT` fails outright against a
+/// table that already has rows, since the database has nothing to put in
+/// the new column for them.
+pub fn add_column_not_null_without_default(source: &str) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (idx, line) in source.lines().enumerate() {
+        let upper = line.to_uppercase();
+        if upper.contains("ADD COLUMN") && upper.contains("NOT NULL") && !upper.contains("DEFAULT")
+        {
+            findings.push(Finding {
+                line: idx + 1,
+                rule: "add-column-not-null-without-default",
+                message:
+                    "ADD COLUMN ... NOT NULL without a DEFAULT fails on a table that already has rows"
+                        .to_string(),
+            });
+        }
+    }
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +117,26 @@ mod tests {
         let sql = "CREATE VIEW v AS SELECT * FROM users;";
         let findings = select_star(sql);
         assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn flags_add_column_not_null_without_default() {
+        let sql = "ALTER TABLE users ADD COLUMN age INTEGER NOT NULL;";
+        let findings = add_column_not_null_without_default(sql);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "add-column-not-null-without-default");
+    }
+
+    #[test]
+    fn allows_add_column_not_null_with_default() {
+        let sql = "ALTER TABLE users ADD COLUMN age INTEGER NOT NULL DEFAULT 0;";
+        assert!(add_column_not_null_without_default(sql).is_empty());
+    }
+
+    #[test]
+    fn allows_add_column_that_is_nullable() {
+        let sql = "ALTER TABLE users ADD COLUMN nickname TEXT;";
+        assert!(add_column_not_null_without_default(sql).is_empty());
     }
 
     #[test]

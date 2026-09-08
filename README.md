@@ -45,10 +45,11 @@ pre-commit hook or CI step.
 - `drop-table-without-if-exists`
 - `drop-column`
 - `select-star`
+- `add-column-not-null-without-default`
 
-More rules (renaming a column that's still referenced elsewhere, missing
-`NOT NULL` defaults on new columns, transactions that mix DDL and DML) are
-planned; see the design note below before adding one.
+More rules (renaming a column that's still referenced elsewhere, transactions
+that mix DDL and DML) are planned; see the design note below before adding
+one.
 
 ## Design
 

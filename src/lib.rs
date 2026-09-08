@@ -25,6 +25,7 @@ pub fn lint(source: &str) -> Vec<Finding> {
     findings.extend(rules::drop_table_without_if_exists(&masked));
     findings.extend(rules::drop_column(&masked));
     findings.extend(rules::select_star(&masked));
+    findings.extend(rules::add_column_not_null_without_default(&masked));
     findings.sort_by_key(|f| f.line);
     findings
 }
