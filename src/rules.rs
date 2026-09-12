@@ -80,6 +80,127 @@ pub fn add_column_not_null_without_default(source: &str) -> Vec<Finding> {
     findings
 }
 
+/// Renaming a column that a view still selects by name breaks the view the
+/// moment the migration runs, but nothing in the `ALTER TABLE` statement
+/// itself hints at that - the failure only shows up when something queries
+/// the view. This rule looks across the whole file: every `RENAME COLUMN`
+/// is checked against every `CREATE VIEW` body for a reference to the old
+/// name, regardless of which statement comes first in the file.
+pub fn rename_column_referenced_by_view(source: &str) -> Vec<Finding> {
+    let statements = split_statements(source);
+
+    let mut renames = Vec::new();
+    let mut views = Vec::new();
+    for (text, offset) in &statements {
+        let tokens = tokenize(text);
+        for (i, tok) in tokens.iter().enumerate() {
+            if tok.text.eq_ignore_ascii_case("RENAME")
+                && tokens.get(i + 1).is_some_and(|t| t.text.eq_ignore_ascii_case("COLUMN"))
+            {
+                if let (Some(old), Some(kw), Some(_new)) =
+                    (tokens.get(i + 2), tokens.get(i + 3), tokens.get(i + 4))
+                {
+                    if kw.text.eq_ignore_ascii_case("TO") {
+                        renames.push((old.text, offset + old.offset));
+                    }
+                }
+            }
+        }
+
+        if let Some(view_idx) = tokens.iter().position(|t| t.text.eq_ignore_ascii_case("VIEW")) {
+            let name = tokens.get(view_idx + 1).map(|t| t.text).unwrap_or("?");
+            views.push((name, *text));
+        }
+    }
+
+    let mut findings = Vec::new();
+    for (old, abs_offset) in &renames {
+        let old_upper = old.to_uppercase();
+        for (view_name, body) in &views {
+            if contains_word(&body.to_uppercase(), &old_upper) {
+                findings.push(Finding {
+                    line: line_at(source, *abs_offset),
+                    rule: "rename-column-referenced-by-view",
+                    message: format!(
+                        "renaming column `{old}` may break view `{view_name}`, which appears to reference it"
+                    ),
+                });
+                break;
+            }
+        }
+    }
+    findings
+}
+
+struct Token<'a> {
+    text: &'a str,
+    offset: usize,
+}
+
+/// Splits `s` into runs of identifier characters, dropping everything else.
+/// Good enough to pull keywords and names out of a statement without a real
+/// SQL tokenizer.
+fn tokenize(s: &str) -> Vec<Token<'_>> {
+    let mut tokens = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, c) in s.char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            if start.is_none() {
+                start = Some(i);
+            }
+        } else if let Some(st) = start.take() {
+            tokens.push(Token { text: &s[st..i], offset: st });
+        }
+    }
+    if let Some(st) = start {
+        tokens.push(Token { text: &s[st..], offset: st });
+    }
+    tokens
+}
+
+/// Splits on `;` and returns each statement's text alongside its byte
+/// offset into `source`, so callers can still map back to a line number.
+fn split_statements(source: &str) -> Vec<(&str, usize)> {
+    let mut statements = Vec::new();
+    let mut start = 0;
+    for (i, c) in source.char_indices() {
+        if c == ';' {
+            statements.push((&source[start..i], start));
+            start = i + c.len_utf8();
+        }
+    }
+    if start < source.len() {
+        statements.push((&source[start..], start));
+    }
+    statements
+}
+
+fn line_at(source: &str, offset: usize) -> usize {
+    1 + source[..offset].matches('\n').count()
+}
+
+/// Case-insensitive search for `needle` as a whole word in `haystack`.
+/// Both arguments are expected to already be uppercased by the caller.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let idx = start + pos;
+        let before_ok = idx == 0 || !is_ident(bytes[idx - 1]);
+        let after = idx + needle.len();
+        let after_ok = after >= bytes.len() || !is_ident(bytes[after]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +268,39 @@ mod tests {
         findings.sort_by_key(|f| f.line);
         assert_eq!(findings[0].line, 2);
         assert_eq!(findings[1].line, 3);
+    }
+
+    #[test]
+    fn flags_rename_column_still_used_by_view() {
+        let sql = "ALTER TABLE users RENAME COLUMN email TO email_address;\n\
+                    CREATE VIEW active_users AS SELECT email FROM users WHERE active;";
+        let findings = rename_column_referenced_by_view(sql);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+        assert_eq!(findings[0].rule, "rename-column-referenced-by-view");
+        assert!(findings[0].message.contains("active_users"));
+    }
+
+    #[test]
+    fn detects_rename_regardless_of_statement_order() {
+        let sql = "CREATE VIEW active_users AS SELECT email FROM users WHERE active;\n\
+                    ALTER TABLE users RENAME COLUMN email TO email_address;";
+        let findings = rename_column_referenced_by_view(sql);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 2);
+    }
+
+    #[test]
+    fn allows_rename_when_no_view_references_it() {
+        let sql = "ALTER TABLE users RENAME COLUMN legacy_id TO legacy_identifier;\n\
+                    CREATE VIEW active_users AS SELECT email FROM users WHERE active;";
+        assert!(rename_column_referenced_by_view(sql).is_empty());
+    }
+
+    #[test]
+    fn does_not_match_column_name_as_a_substring() {
+        let sql = "ALTER TABLE users RENAME COLUMN id TO user_id;\n\
+                    CREATE VIEW valid_users AS SELECT valid_id FROM users;";
+        assert!(rename_column_referenced_by_view(sql).is_empty());
     }
 }

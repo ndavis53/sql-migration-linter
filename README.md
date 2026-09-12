@@ -46,10 +46,10 @@ pre-commit hook or CI step.
 - `drop-column`
 - `select-star`
 - `add-column-not-null-without-default`
+- `rename-column-referenced-by-view`
 
-More rules (renaming a column that's still referenced elsewhere, transactions
-that mix DDL and DML) are planned; see the design note below before adding
-one.
+More rules (transactions that mix DDL and DML) are planned; see the design
+note below before adding one.
 
 ## Design
 
@@ -60,13 +60,18 @@ exit code. That split is what keeps rules trivial to unit test - each one
 is a string literal in, a list of findings out - and it's worth preserving
 when adding new rules.
 
-The rules themselves still match on uppercased line content rather than
-parsing SQL properly, but before they run, `src/tokenizer.rs` blanks out
-the contents of string literals and comments (`--`, `/* */`, quoted
-strings and identifiers, including doubled-quote escapes) so a keyword
-mentioned there doesn't get flagged as if it were a real statement. It's
-still not a real parser: multi-statement lines and dialect-specific quoting
-rules beyond the ANSI basics aren't handled.
+Most rules still match on uppercased line content rather than parsing SQL
+properly, but before they run, `src/tokenizer.rs` blanks out the contents of
+string literals and comments (`--`, `/* */`, quoted strings and identifiers,
+including doubled-quote escapes) so a keyword mentioned there doesn't get
+flagged as if it were a real statement. It's still not a real parser:
+multi-statement lines and dialect-specific quoting rules beyond the ANSI
+basics aren't handled.
+
+`rename-column-referenced-by-view` is the exception: it needs to compare a
+`RENAME COLUMN` against every `CREATE VIEW` in the file, so it splits the
+source on `;` into statements and pulls identifier tokens out of each one
+instead of matching a single line.
 
 ## License
 
