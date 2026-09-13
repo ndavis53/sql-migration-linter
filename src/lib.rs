@@ -3,8 +3,11 @@
 //! access. That's what makes the rules cheap to unit test and safe to run
 //! against migration files before they touch a real database.
 
+pub mod config;
 pub mod rules;
 pub mod tokenizer;
+
+use config::Config;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -20,13 +23,28 @@ pub struct Finding {
 /// so a keyword that only appears inside a string literal or a comment
 /// doesn't get flagged as if it were a real statement.
 pub fn lint(source: &str) -> Vec<Finding> {
+    lint_with_config(source, &Config::default())
+}
+
+/// Same as [`lint`], but skips any rule `config` disables.
+pub fn lint_with_config(source: &str, config: &Config) -> Vec<Finding> {
     let masked = tokenizer::mask_strings_and_comments(source);
     let mut findings = Vec::new();
-    findings.extend(rules::drop_table_without_if_exists(&masked));
-    findings.extend(rules::drop_column(&masked));
-    findings.extend(rules::select_star(&masked));
-    findings.extend(rules::add_column_not_null_without_default(&masked));
-    findings.extend(rules::rename_column_referenced_by_view(&masked));
+    if config.is_enabled("drop-table-without-if-exists") {
+        findings.extend(rules::drop_table_without_if_exists(&masked));
+    }
+    if config.is_enabled("drop-column") {
+        findings.extend(rules::drop_column(&masked));
+    }
+    if config.is_enabled("select-star") {
+        findings.extend(rules::select_star(&masked));
+    }
+    if config.is_enabled("add-column-not-null-without-default") {
+        findings.extend(rules::add_column_not_null_without_default(&masked));
+    }
+    if config.is_enabled("rename-column-referenced-by-view") {
+        findings.extend(rules::rename_column_referenced_by_view(&masked));
+    }
     findings.sort_by_key(|f| f.line);
     findings
 }
@@ -50,6 +68,15 @@ mod tests {
     fn clean_migration_has_no_findings() {
         let sql = "CREATE TABLE accounts (id INTEGER PRIMARY KEY);";
         assert!(lint(sql).is_empty());
+    }
+
+    #[test]
+    fn disabled_rule_is_skipped_but_others_still_run() {
+        let sql = "DROP TABLE accounts;\nSELECT * FROM accounts;";
+        let config = Config::parse("disable drop-table-without-if-exists\n").unwrap();
+        let findings = lint_with_config(sql, &config);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "select-star");
     }
 
     #[test]

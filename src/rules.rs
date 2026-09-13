@@ -5,6 +5,17 @@
 
 use crate::Finding;
 
+/// Canonical rule names, in the order `lint` runs them. This is the list a
+/// config file's `disable` directives are checked against, so a typo in a
+/// config file is caught instead of silently doing nothing.
+pub const RULE_NAMES: [&str; 5] = [
+    "drop-table-without-if-exists",
+    "drop-column",
+    "select-star",
+    "add-column-not-null-without-default",
+    "rename-column-referenced-by-view",
+];
+
 /// `DROP TABLE` without `IF EXISTS` fails outright if a previous deploy
 /// already removed the table, which turns a routine migration into a
 /// blocked release.
@@ -302,5 +313,15 @@ mod tests {
         let sql = "ALTER TABLE users RENAME COLUMN id TO user_id;\n\
                     CREATE VIEW valid_users AS SELECT valid_id FROM users;";
         assert!(rename_column_referenced_by_view(sql).is_empty());
+    }
+
+    #[test]
+    fn rule_names_has_no_duplicates() {
+        for (i, name) in RULE_NAMES.iter().enumerate() {
+            assert!(
+                !RULE_NAMES[..i].contains(name),
+                "{name} appears more than once in RULE_NAMES"
+            );
+        }
     }
 }

@@ -6,12 +6,49 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+use sqlmig_lint::config::Config;
+
 fn main() -> ExitCode {
-    let paths: Vec<String> = env::args().skip(1).collect();
+    let mut config_path: Option<String> = None;
+    let mut paths: Vec<String> = Vec::new();
+
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--config" {
+            let Some(path) = args.next() else {
+                eprintln!("--config requires a path");
+                return ExitCode::FAILURE;
+            };
+            config_path = Some(path);
+        } else {
+            paths.push(arg);
+        }
+    }
+
     if paths.is_empty() {
-        eprintln!("usage: sqlmig-lint <file.sql> [more.sql ...]");
+        eprintln!("usage: sqlmig-lint [--config <file>] <file.sql> [more.sql ...]");
         return ExitCode::FAILURE;
     }
+
+    let config = match config_path {
+        Some(path) => {
+            let text = match fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(err) => {
+                    eprintln!("{path}: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match Config::parse(&text) {
+                Ok(config) => config,
+                Err(err) => {
+                    eprintln!("{path}: {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => Config::default(),
+    };
 
     let mut found_anything = false;
     for path in &paths {
@@ -24,7 +61,7 @@ fn main() -> ExitCode {
             }
         };
 
-        for finding in sqlmig_lint::lint(&source) {
+        for finding in sqlmig_lint::lint_with_config(&source, &config) {
             found_anything = true;
             println!("{path}:{}: [{}] {}", finding.line, finding.rule, finding.message);
         }

@@ -40,6 +40,28 @@ migrations/0007_drop_legacy_columns.sql:3: [select-star] SELECT * in a migration
 It exits non-zero if it found anything, so it can be dropped into a
 pre-commit hook or CI step.
 
+## Config file
+
+Pass `--config <file>` to turn individual rules off:
+
+```
+./target/release/sqlmig-lint --config sqlmig-lint.conf migrations/*.sql
+```
+
+The file has one directive per line - `disable <rule-name>` - with `#`
+starting a comment and blank lines ignored:
+
+```
+# this table is deliberately dropped without IF EXISTS during teardown
+disable drop-table-without-if-exists
+disable select-star
+```
+
+An unknown rule name or a malformed line is a hard error rather than a
+silent no-op, so a typo in the config doesn't leave a rule looking disabled
+when it's still running. There's no way to disable every rule and enable a
+few back on - every rule starts enabled, so `enable` has nothing to do yet.
+
 ## Rules implemented so far
 
 - `drop-table-without-if-exists`
